@@ -52,19 +52,22 @@
 /* USER CODE BEGIN PV */
 static uint8_t usart_buffer[USART_BUFFER_SIZE];
 
-static enum COMMAND_N_LIST {
+enum COMMAND_N_LIST {
 	COMMAND_LED_U_OFF = 1,
 	COMMAND_LED_U_ON,
 	COMMAND_LED_PWM_OFF,
 	COMMAND_LED_PWM_ON,
 	COMMAND_END,
 };
+
 const static char *COMMAND_LIST[] = {
 		[COMMAND_LED_U_OFF] = "led1 off",
 		[COMMAND_LED_U_ON] =  "led1 on",
 		[COMMAND_LED_PWM_OFF] =  "led2 off",
 		[COMMAND_LED_PWM_ON] =  "led2 on",
 };
+
+static int duty_percent = 30;
 
 /* USER CODE END PV */
 
@@ -81,7 +84,7 @@ static enum COMMAND_N_LIST Command_receive(void)
 	HAL_UART_Receive(&huart1, usart_buffer, USART_BUFFER_SIZE, 100);
 
 	for (enum COMMAND_N_LIST i = 1; i < COMMAND_END; i++) {
-		if (strcmp(COMMAND_LIST[i], usart_buffer) == 0) {
+		if (strcmp(COMMAND_LIST[i], (char *)usart_buffer) == 0) {
 			return i;
 		}
 	}
@@ -121,6 +124,8 @@ static void Command_handler(enum COMMAND_N_LIST command)
 		HAL_TIMEx_PWMN_Stop(&htim3, LED_PWM_TIM_CHANNEL);
 		break;
 	case COMMAND_LED_PWM_ON:
+		int full = __HAL_TIM_GET_AUTORELOAD(&htim3);
+		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (duty_percent * full / 100));
 		HAL_TIMEx_PWMN_Start(&htim3, LED_PWM_TIM_CHANNEL);
 		break;
 	default:
@@ -163,7 +168,9 @@ int main(void)
   MX_TIM3_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-//  static enum COMMAND_LIST cmd = 0;
+  static enum COMMAND_N_LIST cmd = 0;
+
+  LED_PWM_Init();
 
   /* USER CODE END 2 */
 
@@ -171,10 +178,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  cmd = Command_receive();
-//	  if (cmd != 0) {
-		  Command_handler(Command_receive());
-//	  }
+	  cmd = Command_receive();
+	  if (cmd != 0) {
+		  Command_handler(cmd);
+	  }
 
     /* USER CODE END WHILE */
 
