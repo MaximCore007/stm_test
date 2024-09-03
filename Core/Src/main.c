@@ -36,10 +36,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define USART_BUFFER_SIZE 32U
+#define USART_BUFFER_SIZE 512U
 #define LED_PWD_FREQ 	200U
 #define LED_PWM_TIM_CHANNEL TIM_CHANNEL_1
 
+#define I2C_BUFFER_SIZE 128U
+#define I2C_SLAVE_ADDRESS 0xA0
+#define I2C_MEM_ADDRESS 0x00
+#define I2C_MEM_ADD_SIZE 2U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,12 +55,14 @@
 
 /* USER CODE BEGIN PV */
 static uint8_t usart_buffer[USART_BUFFER_SIZE];
+static uint8_t i2c_buffer[I2C_BUFFER_SIZE];
 
 enum COMMAND_N_LIST {
 	COMMAND_LED_U_OFF = 1,
 	COMMAND_LED_U_ON,
 	COMMAND_LED_PWM_OFF,
 	COMMAND_LED_PWM_ON,
+	COMMAND_I2C_READ,
 	COMMAND_END,
 };
 
@@ -65,10 +71,18 @@ const static char *COMMAND_LIST[] = {
 		[COMMAND_LED_U_ON] =  "led1 on",
 		[COMMAND_LED_PWM_OFF] =  "led2 off",
 		[COMMAND_LED_PWM_ON] =  "led2 on",
+		[COMMAND_I2C_READ] = "read i2c",
 };
 
 static int duty_percent = 30;
 
+static struct I2C_MEM_PARAM {
+	uint16_t slave_addr;
+	uint16_t mem_addr;
+	uint16_t mem_addr_size;
+	uint16_t buffer_size;	// data size
+	uint8_t *buffer;
+} i2c_dev;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,6 +93,24 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void I2C_SlaveDeviceInit(void)
+{
+	i2c_dev.buffer = i2c_buffer;
+	i2c_dev.buffer_size = I2C_BUFFER_SIZE;
+	i2c_dev.slave_addr = I2C_SLAVE_ADDRESS;
+	i2c_dev.mem_addr = I2C_MEM_ADDRESS;
+	i2c_dev.mem_addr_size = I2C_MEM_ADD_SIZE;
+}
+
+static void USART_SendMessage(uint8_t *buffer, uint16_t size)
+{
+	if (size > USART_BUFFER_SIZE) {
+		size = USART_BUFFER_SIZE;
+	}
+	memcpy(usart_buffer, buffer, size);
+	HAL_UART_Transmit(&huart1, usart_buffer, size, 100);
+}
+
 static enum COMMAND_N_LIST Command_receive(void)
 {
 	HAL_UART_Receive(&huart1, usart_buffer, USART_BUFFER_SIZE, 100);
@@ -96,11 +128,15 @@ static void LED_PWM_Init(void)
 	uint32_t APBfreq = HAL_RCC_GetPCLK1Freq();
     APBfreq *= (RCC->CFGR & RCC_CFGR_PPRE1) == 0 ? 1 : 2;
 
+    uint32_t TIMfreq = APBfreq;
 	htim3.Init.Prescaler = 0;
-    while ((APBfreq / LED_PWD_FREQ) > 65535) {
-		htim3.Init.Prescaler++;
-		APBfreq /= htim3.Init.Prescaler + 1;
+    while ((TIMfreq / LED_PWD_FREQ) > 65535) {
+		htim3.Init.Prescaler += 2;
+		TIMfreq = APBfreq / htim3.Init.Prescaler;
     }
+    if (htim3.Init.Prescaler > 0)
+		htim3.Init.Prescaler -= 1;
+
 	htim3.Init.Period = (APBfreq / LED_PWD_FREQ) - 1;
 
 	htim3.Instance = TIM3;
@@ -124,9 +160,13 @@ static void Command_handler(enum COMMAND_N_LIST command)
 		HAL_TIMEx_PWMN_Stop(&htim3, LED_PWM_TIM_CHANNEL);
 		break;
 	case COMMAND_LED_PWM_ON:
-		int full = __HAL_TIM_GET_AUTORELOAD(&htim3);
-		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (duty_percent * full / 100));
+		int ARR = __HAL_TIM_GET_AUTORELOAD(&htim3);
+		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (duty_percent * ARR / 100));
 		HAL_TIMEx_PWMN_Start(&htim3, LED_PWM_TIM_CHANNEL);
+		break;
+	case COMMAND_I2C_READ:
+		HAL_I2C_Mem_Read(&hi2c1, i2c_dev.slave_addr, i2c_dev.mem_addr, i2c_dev.mem_addr_size, i2c_dev.buffer, i2c_dev.buffer_size, 100);
+		USART_SendMessage(i2c_dev.buffer, i2c_dev.buffer_size);
 		break;
 	default:
 		break;
@@ -170,6 +210,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   static enum COMMAND_N_LIST cmd = 0;
 
+  I2C_SlaveDeviceInit();
   LED_PWM_Init();
 
   /* USER CODE END 2 */
